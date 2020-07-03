@@ -1,0 +1,111 @@
+<html>
+    <head>
+        <title>USB Descriptor Parser</title>
+        <style>
+            /* Remove default bullets */
+            ul, #myUL {
+                list-style-type: none;
+            }
+
+            /* Remove margins and padding from the parent ul */
+            #myUL {
+                margin: 0;
+                padding: 0;
+            }
+
+            /* Style the caret/arrow */
+            .caret {
+                cursor: pointer;
+                user-select: none; /* Prevent text selection */
+            }
+
+            /* Create the caret/arrow with a unicode, and style it */
+            .caret::before {
+                content: "\25B6";
+                color: black;
+                display: inline-block;
+                margin-right: 6px;
+            }
+
+            /* Rotate the caret/arrow icon when clicked on (using JavaScript) */
+            .caret-down::before {
+                transform: rotate(90deg);
+            }
+
+            /* Hide the nested list */
+            .nested {
+                display: block;
+            }
+
+            /* Show the nested list when the user clicks on the caret/arrow (with JavaScript) */
+            .active {
+                display: block;
+            }
+        </style>
+        <script>
+            const descTypeMap = {
+                '1': 'USB_DT_DEVICE',
+                '2': 'USB_DT_CONFIG',
+                '4': 'USB_DT_INTERFACE',
+                '5': 'USB_DT_ENDPOINT',
+                '11': 'USB_DT_INTERFACE_ASSOCIATION',
+                '36': 'USB_DT_CS_INTERFACE',
+                '48': 'USB_DT_SS_ENDPOINT_COMP',
+            };
+            const renderTree = (node,) => {
+                const parser = new DOMParser();
+                const domString = `
+                <ul class="nested">
+                    <li>
+                        <span class="caret">${node.name}</span>
+                        ${node.children.reduce((acc, cur) => acc + renderTree(cur), "")}
+                    </li>
+                </ul>
+                `;
+                return domString;
+            }
+            const parseUsbDescriptor = (buffer, pos) => {
+                const u8 = new Uint8Array(buffer, pos, 2);
+                return {
+                    name: `${descTypeMap[u8[1]] || `Unknown (${u8[1]})`} ${u8[0]}`,
+                    bLength: u8[0],
+                    bDescriptorType: u8[1],
+                    children: [],
+                }
+            }
+            const parseFile = (buffer) => {
+                const root = {name: 'root', children: []};
+                let pos = 0;
+                while(pos < buffer.byteLength) {
+                    const desc = parseUsbDescriptor(buffer, pos);
+                    root.children.push(desc);
+                    pos += desc.bLength;
+                }
+                return root;
+            };
+            const onRead = (e) => {
+                const buffer = e.target.result;
+                const root = parseFile(buffer);
+                const domString = renderTree(root, document.body);
+                const parser = new DOMParser();
+                const html = parser.parseFromString(domString, 'text/html');    
+                document.body.append(html.body.firstChild);
+            }
+            const readSingleFile = (e) => {
+                var file = e.target.files[0];
+                if (!file) return;
+                var reader = new FileReader();
+                reader.onload = onRead;
+                reader.readAsArrayBuffer(file);
+            };
+            onload = () => {
+                const fpMain = document.getElementById('fpMain');
+                fpMain.addEventListener('change', readSingleFile, false);
+            }
+        </script>
+    </head>
+    <body>
+        Select a binary USB descriptor file:
+        <input type="file" id="fpMain" />
+    </body>
+</html>
