@@ -43,6 +43,67 @@
             }
         </style>
         <script>
+            const parseTree = (arrayBuffer) => {
+                const node = new TreeNode()
+                let index = 0
+                const dataView = new DataView(arrayBuffer)
+                while(index < arrayBuffer.byteLength) {
+                    const size = dataView.getUint8(index)
+                    const type = dataView.getUint8(index + 1)
+                    const byteArr = arrayBuffer.slice(index, index + size)
+
+                    const child = descriptorFactory(type, byteArr)
+                    node.children.push(child)
+                    console.log(child.toString())
+
+                    index += size
+                }
+                console.log(`made ${node.children.length} children`)
+                return node
+            }
+            
+            class TreeNode {
+                constructor() {
+                    this.children = []
+                }
+            }
+
+            class UsbDescriptor extends TreeNode {
+                constructor(byteArr) {
+                    super()
+                    this.byteArr = byteArr
+                    this.dataView = new DataView(this.byteArr)
+                }
+                get type() {
+                    return this.dataView.getUint8(0)
+                }
+                get typeName() {
+                    return descTypeMap(this.type)
+                }
+                toString() {
+                    return `Unknown Descriptor type=${this.type} size=${this.byteArr.byteLength}`
+                }
+            }
+
+            class DeviceDescriptor extends UsbDescriptor {
+                constructor(byteArr) {
+                    super(byteArr)
+                }
+                get maxPower() {
+                    return `${this.dataView.getUint8(8) * 2}ma`;
+                }
+                toString() {
+                    return `DeviceDescriptor maxPower=${this.maxPower}`
+                }
+            }
+
+            const descriptorFactory = (type, byteArr) => {
+                if (descTypeMap[type] === 'USB_DT_DEVICE') {
+                    return new DeviceDescriptor(byteArr)
+                } else {
+                    return new UsbDescriptor(byteArr)
+                }
+            }
             const descTypeMap = {
                 '1': 'USB_DT_DEVICE',
                 '2': 'USB_DT_CONFIG',
@@ -52,18 +113,6 @@
                 '36': 'USB_DT_CS_INTERFACE',
                 '48': 'USB_DT_SS_ENDPOINT_COMP',
             };
-            const renderTree = (node,) => {
-                const parser = new DOMParser();
-                const domString = `
-                <ul class="nested">
-                    <li>
-                        <span class="caret">${node.name}</span>
-                        ${node.children.reduce((acc, cur) => acc + renderTree(cur), "")}
-                    </li>
-                </ul>
-                `;
-                return domString;
-            }
             const parseUsbDescriptor = (buffer, pos) => {
                 const u8 = new Uint8Array(buffer, pos, 2);
                 return {
@@ -73,23 +122,13 @@
                     children: [],
                 }
             }
-            const parseFile = (buffer) => {
-                const root = {name: 'root', children: []};
-                let pos = 0;
-                while(pos < buffer.byteLength) {
-                    const desc = parseUsbDescriptor(buffer, pos);
-                    root.children.push(desc);
-                    pos += desc.bLength;
-                }
-                return root;
+            const parseFile = (arrayBuffer) => {
+                // TODO: parse
+                const root = parseTree(arrayBuffer)
             };
             const onRead = (e) => {
-                const buffer = e.target.result;
-                const root = parseFile(buffer);
-                const domString = renderTree(root, document.body);
-                const parser = new DOMParser();
-                const html = parser.parseFromString(domString, 'text/html');    
-                document.body.append(html.body.firstChild);
+                const arrayBuffer = e.target.result;
+                const root = parseFile(arrayBuffer);
             }
             const readSingleFile = (e) => {
                 var file = e.target.files[0];
