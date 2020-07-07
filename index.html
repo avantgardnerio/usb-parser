@@ -31,19 +31,22 @@
                 '__u16': 2,
                 '__u32': 4,
                 '__le16': 2,
+                '__le32': 4,
             }
             const funcMap = {
                 '__u8': 'getUint8',
                 '__u16': 'getUint16',
                 '__u32': 'getUint32',
                 '__le16': 'getInt16',
+                '__le32': 'getInt32',
             }
             const defMap = {
                 'USB_DT_DEVICE': `__u8 bLength; __u8 bDescriptorType; __le16 bcdUSB; __u8 bDeviceClass; __u8 bDeviceSubClass; __u8 bDeviceProtocol; __u8 bMaxPacketSize0; __le16 idVendor; __le16 idProduct; __le16 bcdDevice; __u8 iManufacturer; __u8 iProduct; __u8 iSerialNumber; __u8 bNumConfigurations;`,
                 'USB_DT_CONFIG': '__u8 bLength; __u8 bDescriptorType; __le16 wTotalLength; __u8 bNumInterfaces; __u8 bConfigurationValue; __u8 iConfiguration; __u8 bmAttributes; __u8 bMaxPower;',
                 'USB_DT_INTERFACE_ASSOCIATION': '__u8 bLength; __u8 bDescriptorType; __u8 bFirstInterface; __u8 bInterfaceCount; __u8 bFunctionClass; __u8 bFunctionSubClass; __u8 bFunctionProtocol; __u8 iFunction;',
                 'USB_DT_INTERFACE': '__u8 bLength; __u8 bDescriptorType; __u8 bInterfaceNumber; __u8 bAlternateSetting; __u8 bNumEndpoints; __u8 bInterfaceClass; __u8 bInterfaceSubClass; __u8 bInterfaceProtocol; __u8 iInterface;',
-                'USB_DT_CS_INTERFACE': ''
+                'USB_DT_ENDPOINT': '__u8 bLength; __u8 bDescriptorType; __u8 bEndpointAddress; __u8 bmAttributes; __le16 wMaxPacketSize; __u8 bInterval; __u8 bRefresh; __u8 bSynchAddress;',
+                'USB_DT_CS_INTERFACE': '',
             };
             const descTypeMap = {
                 '1': 'USB_DT_DEVICE',
@@ -56,9 +59,27 @@
             };
             const csTypeMap = {
                 '14': { // video
-                    '1': {
-                        name: 'uvc_input_header_descriptor',
-                        def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bNumFormats; __le16 wTotalLength; __u8 bEndpointAddress; __u8 bmInfo; __u8 bTerminalLink; __u8 bStillCaptureMethod; __u8 bTriggerSupport; __u8 bTriggerUsage; __u8 bControlSize;',
+                    '1': { // video control
+                        name: 'uvc_descriptor_header',
+                        def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType;',
+                        ifaces: {
+                            '1': {
+                                name: 'uvc_header_descriptor',
+                                def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __le16 bcdUVC; __le16 wTotalLength; __le32 dwClockFrequency; __u8 bInCollection;',
+                            },
+                            '2': {
+                                name: 'uvc_input_terminal_descriptor',
+                                def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bTerminalID; __le16 wTerminalType; __u8 bAssocTerminal; __u8 iTerminal;',
+                            },
+                            // TODO: handle arrays like bmControls[]
+                            '5': {
+                                name: 'uvc_processing_unit_descriptor',
+                                def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bUnitID; __u8 bSourceID; __le16 wMaxMultiplier; __u8 bControlSize; __u8 bmControl0; __u8 bmControl1; __u8 iProcessing;',
+                            },
+                            '6': {
+                                name: 'uvc_extension_unit_descriptor',
+                            }
+                        }
                     }
                 },
             };
@@ -70,40 +91,49 @@
                 const dataView = new DataView(arrayBuffer)
                 while(index < arrayBuffer.byteLength) {
                     const size = dataView.getUint8(index)
-                    const type = dataView.getUint8(index + 1)
+                    const usbDescTypeNum = dataView.getUint8(index + 1)
                     const byteArr = arrayBuffer.slice(index, index + size)
-                    let typeName = descTypeMap[type];
-                    if(!(type in descTypeMap)) throw Error(`Implement ${type}`);
-                    const def = defMap[typeName];
-                    if(!(typeName in defMap)) throw Error(`Implement ${typeName}`);
-                    let terms = def.split(";").map(it => it.trim()).filter(it => it.length > 0);
-                    let pairs = terms.map(it => it.split(" "));
+                    let typeName = descTypeMap[usbDescTypeNum];
+                    if(!(usbDescTypeNum in descTypeMap)) throw Error(`Implement USB descriptor type number ${usbDescTypeNum}`);
+                    let def = defMap[typeName];
+                    if(!(typeName in defMap)) throw Error(`Implement USB descriptor type ${typeName}`);
+                    const view = new DataView(byteArr);
                     if(typeName === 'USB_DT_CS_INTERFACE') {
                         if(!(ifaceClass in csTypeMap)) throw Error(`Implement ${ifaceClass}`);
                         const subClassMap = csTypeMap[ifaceClass];
                         if(!(ifaceSubClass in subClassMap)) throw Error(`Implement ${ifaceSubClass}`);
-                        typeName = subClassMap[ifaceSubClass]['name'];
-                        const def = subClassMap[ifaceSubClass]['def'];
-                        terms = def.split(";").map(it => it.trim()).filter(it => it.length > 0);
-                        pairs = terms.map(it => it.split(" "));
+                        const ifaceSubType = view.getUint8(2);
+                        if(!(ifaceSubType in csTypeMap[ifaceClass][ifaceSubClass].ifaces)) {
+                            console.error(`Implement UVC interface subtype ${ifaceSubType}`);
+                            def = undefined;
+                        } else {
+                            def = csTypeMap[ifaceClass][ifaceSubClass].ifaces[ifaceSubType].def;
+                            typeName = csTypeMap[ifaceClass][ifaceSubClass].ifaces[ifaceSubType].name;
+                            if(!def) {
+                                console.error(`Implement UVC interface subtype ${typeName}`);
+                            }
+                        }
                     }
-                    const view = new DataView(byteArr);
-                    let byteIdx = 0;
-                    const child = {type: typeName};
-                    for(let i = 0; i < pairs.length; i++) {
-                        const p = pairs[i];
-                        const t = p[0];
-                        if(byteIdx + sizeMap[t] > size) {
-                            throw Error("Too big!");
+                    const child = {type: typeName, bytes: byteArr};
+                    if(def) {
+                        const pairs = def.split(";").map(it => it.trim()).filter(it => it.length > 0).map(it => it.split(" "));
+                        let byteIdx = 0;
+                        for(let i = 0; i < pairs.length; i++) {
+                            const p = pairs[i];
+                            const t = p[0];
+                            if(byteIdx + sizeMap[t] > size) {
+                                throw Error("Too big!");
+                            }
+                            const field = p[1];
+                            if(!(t in funcMap) || !(t in sizeMap)) {
+                                throw Error(`Implement ${t}`);
+                            }
+                            const f = funcMap[t];
+                            const res = view[f](byteIdx, true);
+                            child[field] = res;
+                            byteIdx += sizeMap[t];
                         }
-                        const field = p[1];
-                        if(!(t in funcMap) || !(t in sizeMap)) {
-                            throw Error(`Implement ${t}`);
-                        }
-                        const f = funcMap[t];
-                        const res = view[f](byteIdx);
-                        child[field] = res;
-                        byteIdx += sizeMap[t];
+                        if(byteIdx < size) console.error("Extra data!");
                     }
                     if(typeName === 'USB_DT_INTERFACE') {
                         ifaceClass = child.bInterfaceClass;
@@ -112,8 +142,6 @@
 
                     node.children.push(child);
                     console.log(child);
-
-                    if(byteIdx < size) console.error("Extra data!");
                     index += size
                 }
                 console.log(`made ${node.children.length} children`)
