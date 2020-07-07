@@ -45,7 +45,7 @@
                 'USB_DT_CONFIG': '__u8 bLength; __u8 bDescriptorType; __le16 wTotalLength; __u8 bNumInterfaces; __u8 bConfigurationValue; __u8 iConfiguration; __u8 bmAttributes; __u8 bMaxPower;',
                 'USB_DT_INTERFACE_ASSOCIATION': '__u8 bLength; __u8 bDescriptorType; __u8 bFirstInterface; __u8 bInterfaceCount; __u8 bFunctionClass; __u8 bFunctionSubClass; __u8 bFunctionProtocol; __u8 iFunction;',
                 'USB_DT_INTERFACE': '__u8 bLength; __u8 bDescriptorType; __u8 bInterfaceNumber; __u8 bAlternateSetting; __u8 bNumEndpoints; __u8 bInterfaceClass; __u8 bInterfaceSubClass; __u8 bInterfaceProtocol; __u8 iInterface;',
-                'USB_DT_ENDPOINT': '__u8 bLength; __u8 bDescriptorType; __u8 bEndpointAddress; __u8 bmAttributes; __le16 wMaxPacketSize; __u8 bInterval; __u8 bRefresh; __u8 bSynchAddress;',
+                'USB_DT_ENDPOINT': '__u8 bLength; __u8 bDescriptorType; __u8 bEndpointAddress; __u8 bmAttributes; __le16 wMaxPacketSize; __u8 bInterval;',
                 'USB_DT_CS_INTERFACE': '',
             };
             const descTypeMap = {
@@ -71,7 +71,11 @@
                                 name: 'uvc_input_terminal_descriptor',
                                 def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bTerminalID; __le16 wTerminalType; __u8 bAssocTerminal; __u8 iTerminal;',
                             },
-                            // TODO: handle arrays like bmControls[]
+                            '3': {
+                                name: 'uvc_output_terminal_descriptor',
+                                def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bTerminalID; __le16 wTerminalType; __u8 bAssocTerminal; __u8 bSourceID; __u8 iTerminal;',
+                            },
+                            // TODO: handle arrays like bmControls[] and 16 byte uuids
                             '5': {
                                 name: 'uvc_processing_unit_descriptor',
                                 def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bUnitID; __u8 bSourceID; __le16 wMaxMultiplier; __u8 bControlSize; __u8 bmControl0; __u8 bmControl1; __u8 iProcessing;',
@@ -94,7 +98,9 @@
                     const usbDescTypeNum = dataView.getUint8(index + 1)
                     const byteArr = arrayBuffer.slice(index, index + size)
                     let typeName = descTypeMap[usbDescTypeNum];
-                    if(!(usbDescTypeNum in descTypeMap)) throw Error(`Implement USB descriptor type number ${usbDescTypeNum}`);
+                    if(!(usbDescTypeNum in descTypeMap)) {
+                        throw Error(`Implement USB descriptor type number ${usbDescTypeNum}`);
+                    }
                     let def = defMap[typeName];
                     if(!(typeName in defMap)) throw Error(`Implement USB descriptor type ${typeName}`);
                     const view = new DataView(byteArr);
