@@ -2,108 +2,49 @@
     <head>
         <title>USB Descriptor Parser</title>
         <style>
-            /* Remove default bullets */
-            ul, #myUL {
+            ul {
                 list-style-type: none;
             }
-
-            /* Remove margins and padding from the parent ul */
-            #myUL {
-                margin: 0;
-                padding: 0;
-            }
-
-            /* Style the caret/arrow */
             .caret {
                 cursor: pointer;
                 user-select: none; /* Prevent text selection */
             }
-
-            /* Create the caret/arrow with a unicode, and style it */
             .caret::before {
                 content: "\25B6";
                 color: black;
                 display: inline-block;
                 margin-right: 6px;
             }
-
-            /* Rotate the caret/arrow icon when clicked on (using JavaScript) */
             .caret-down::before {
                 transform: rotate(90deg);
             }
-
-            /* Hide the nested list */
             .nested {
                 display: block;
             }
-
-            /* Show the nested list when the user clicks on the caret/arrow (with JavaScript) */
             .active {
                 display: block;
             }
         </style>
         <script>
-            const parseTree = (arrayBuffer) => {
-                const node = new TreeNode()
-                let index = 0
-                const dataView = new DataView(arrayBuffer)
-                while(index < arrayBuffer.byteLength) {
-                    const size = dataView.getUint8(index)
-                    const type = dataView.getUint8(index + 1)
-                    const byteArr = arrayBuffer.slice(index, index + size)
-
-                    const child = descriptorFactory(type, byteArr)
-                    node.children.push(child)
-                    console.log(child.toString())
-
-                    index += size
-                }
-                console.log(`made ${node.children.length} children`)
-                return node
+            const sizeMap = {
+                '__u8': 1,
+                '__u16': 2,
+                '__u32': 4,
+                '__le16': 2,
             }
-            
-            class TreeNode {
-                constructor() {
-                    this.children = []
-                }
+            const funcMap = {
+                '__u8': 'getUint8',
+                '__u16': 'getUint16',
+                '__u32': 'getUint32',
+                '__le16': 'getInt16',
             }
-
-            class UsbDescriptor extends TreeNode {
-                constructor(byteArr) {
-                    super()
-                    this.byteArr = byteArr
-                    this.dataView = new DataView(this.byteArr)
-                }
-                get type() {
-                    return this.dataView.getUint8(0)
-                }
-                get typeName() {
-                    return descTypeMap(this.type)
-                }
-                toString() {
-                    return `Unknown Descriptor type=${this.type} size=${this.byteArr.byteLength}`
-                }
-            }
-
-            class DeviceDescriptor extends UsbDescriptor {
-                constructor(byteArr) {
-                    super(byteArr)
-                }
-                get maxPower() {
-                    return `${this.dataView.getUint8(8) * 2}ma`;
-                }
-                toString() {
-                    return `DeviceDescriptor maxPower=${this.maxPower}`
-                }
-            }
-
-            const descriptorFactory = (type, byteArr) => {
-                if (descTypeMap[type] === 'USB_DT_DEVICE') {
-                    return new DeviceDescriptor(byteArr)
-                } else {
-                    return new UsbDescriptor(byteArr)
-                }
-            }
+            const defMap = {
+                'USB_DT_DEVICE': `__u8 bLength; __u8 bDescriptorType; __le16 bcdUSB; __u8 bDeviceClass; __u8 bDeviceSubClass; __u8 bDeviceProtocol; __u8 bMaxPacketSize0; __le16 idVendor; __le16 idProduct; __le16 bcdDevice; __u8 iManufacturer; __u8 iProduct; __u8 iSerialNumber; __u8 bNumConfigurations;`,
+                'USB_DT_CONFIG': '__u8 bLength; __u8 bDescriptorType; __le16 wTotalLength; __u8 bNumInterfaces; __u8 bConfigurationValue; __u8 iConfiguration; __u8 bmAttributes; __u8 bMaxPower;',
+                'USB_DT_INTERFACE_ASSOCIATION': '__u8 bLength; __u8 bDescriptorType; __u8 bFirstInterface; __u8 bInterfaceCount; __u8 bFunctionClass; __u8 bFunctionSubClass; __u8 bFunctionProtocol; __u8 iFunction;',
+                'USB_DT_INTERFACE': '__u8 bLength; __u8 bDescriptorType; __u8 bInterfaceNumber; __u8 bAlternateSetting; __u8 bNumEndpoints; __u8 bInterfaceClass; __u8 bInterfaceSubClass; __u8 bInterfaceProtocol; __u8 iInterface;',
+                'USB_DT_CS_INTERFACE': ''
+            };
             const descTypeMap = {
                 '1': 'USB_DT_DEVICE',
                 '2': 'USB_DT_CONFIG',
@@ -113,27 +54,83 @@
                 '36': 'USB_DT_CS_INTERFACE',
                 '48': 'USB_DT_SS_ENDPOINT_COMP',
             };
-            const parseUsbDescriptor = (buffer, pos) => {
-                const u8 = new Uint8Array(buffer, pos, 2);
-                return {
-                    name: `${descTypeMap[u8[1]] || `Unknown (${u8[1]})`} ${u8[0]}`,
-                    bLength: u8[0],
-                    bDescriptorType: u8[1],
-                    children: [],
+            const csTypeMap = {
+                '14': { // video
+                    '1': {
+                        name: 'uvc_input_header_descriptor',
+                        def: '__u8 bLength; __u8 bDescriptorType; __u8 bDescriptorSubType; __u8 bNumFormats; __le16 wTotalLength; __u8 bEndpointAddress; __u8 bmInfo; __u8 bTerminalLink; __u8 bStillCaptureMethod; __u8 bTriggerSupport; __u8 bTriggerUsage; __u8 bControlSize;',
+                    }
+                },
+            };
+            const parseList = (arrayBuffer) => {
+                const node = {children: []};
+                let index = 0
+                let ifaceClass;
+                let ifaceSubClass;
+                const dataView = new DataView(arrayBuffer)
+                while(index < arrayBuffer.byteLength) {
+                    const size = dataView.getUint8(index)
+                    const type = dataView.getUint8(index + 1)
+                    const byteArr = arrayBuffer.slice(index, index + size)
+                    let typeName = descTypeMap[type];
+                    if(!(type in descTypeMap)) throw Error(`Implement ${type}`);
+                    const def = defMap[typeName];
+                    if(!(typeName in defMap)) throw Error(`Implement ${typeName}`);
+                    let terms = def.split(";").map(it => it.trim()).filter(it => it.length > 0);
+                    let pairs = terms.map(it => it.split(" "));
+                    if(typeName === 'USB_DT_CS_INTERFACE') {
+                        if(!(ifaceClass in csTypeMap)) throw Error(`Implement ${ifaceClass}`);
+                        const subClassMap = csTypeMap[ifaceClass];
+                        if(!(ifaceSubClass in subClassMap)) throw Error(`Implement ${ifaceSubClass}`);
+                        typeName = subClassMap[ifaceSubClass]['name'];
+                        const def = subClassMap[ifaceSubClass]['def'];
+                        terms = def.split(";").map(it => it.trim()).filter(it => it.length > 0);
+                        pairs = terms.map(it => it.split(" "));
+                    }
+                    const view = new DataView(byteArr);
+                    let byteIdx = 0;
+                    const child = {type: typeName};
+                    for(let i = 0; i < pairs.length; i++) {
+                        const p = pairs[i];
+                        const t = p[0];
+                        if(byteIdx + sizeMap[t] > size) {
+                            throw Error("Too big!");
+                        }
+                        const field = p[1];
+                        if(!(t in funcMap) || !(t in sizeMap)) {
+                            throw Error(`Implement ${t}`);
+                        }
+                        const f = funcMap[t];
+                        const res = view[f](byteIdx);
+                        child[field] = res;
+                        byteIdx += sizeMap[t];
+                    }
+                    if(typeName === 'USB_DT_INTERFACE') {
+                        ifaceClass = child.bInterfaceClass;
+                        ifaceSubClass = child.bInterfaceSubClass;
+                    }
+
+                    node.children.push(child);
+                    console.log(child);
+
+                    if(byteIdx < size) console.error("Extra data!");
+                    index += size
                 }
+                console.log(`made ${node.children.length} children`)
+                return node
             }
             const parseFile = (arrayBuffer) => {
                 // TODO: parse
-                const root = parseTree(arrayBuffer)
+                const root = parseList(arrayBuffer)
             };
             const onRead = (e) => {
                 const arrayBuffer = e.target.result;
                 const root = parseFile(arrayBuffer);
             }
             const readSingleFile = (e) => {
-                var file = e.target.files[0];
+                const file = e.target.files[0];
                 if (!file) return;
-                var reader = new FileReader();
+                const reader = new FileReader();
                 reader.onload = onRead;
                 reader.readAsArrayBuffer(file);
             };
